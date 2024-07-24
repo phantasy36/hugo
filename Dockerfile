@@ -1,45 +1,41 @@
-# GitHub:       https://github.com/gohugoio
-# Twitter:      https://twitter.com/gohugoio
-# Website:      https://gohugo.io/
+FROM docker.io/library/golang:1.20-alpine
 
-FROM golang:1.21-alpine AS build
+RUN apk add --no-cache \
+    curl \
+    gcc \
+    g++ \
+    musl-dev \
+    build-base \
+    libc6-compat
 
-# Optionally set HUGO_BUILD_TAGS to "extended" or "nodeploy" when building like so:
-#   docker build --build-arg HUGO_BUILD_TAGS=extended .
-ARG HUGO_BUILD_TAGS
+ARG HUGO_VERSION
 
-ARG CGO=1
-ENV CGO_ENABLED=${CGO}
-ENV GOOS=linux
-ENV GO111MODULE=on
+RUN mkdir $HOME/src && \
+    cd $HOME/src && \
+    curl -L https://github.com/gohugoio/hugo/archive/refs/tags/v${HUGO_VERSION}.tar.gz | tar -xz && \
+    cd "hugo-${HUGO_VERSION}" && \
+    go install --tags extended
 
-WORKDIR /go/src/github.com/gohugoio/hugo
+FROM docker.io/library/golang:1.20-alpine
 
-COPY . /go/src/github.com/gohugoio/hugo/
+RUN apk add --no-cache \
+    runuser \
+    git \
+    openssh-client \
+    rsync \
+    npm && \
+    npm install -D autoprefixer postcss-cli
 
-# gcc/g++ are required to build SASS libraries for extended version
-RUN apk update && \
-    apk add --no-cache gcc g++ musl-dev git && \
-    go install github.com/magefile/mage
+RUN mkdir -p /var/hugo && \
+    addgroup -Sg 1000 hugo && \
+    adduser -Sg hugo -u 1000 -h /var/hugo hugo && \
+    chown -R hugo: /var/hugo && \
+    runuser -u hugo -- git config --global --add safe.directory /src
 
-RUN mage hugo && mage install
+COPY --from=0 /go/bin/hugo /usr/local/bin/hugo
 
-# ---
+WORKDIR /src
 
-FROM alpine:3.18
+USER hugo:hugo
 
-COPY --from=build /go/bin/hugo /usr/bin/hugo
-
-# libc6-compat & libstdc++ are required for extended SASS libraries
-# ca-certificates are required to fetch outside resources (like Twitter oEmbeds)
-RUN apk update && \
-    apk add --no-cache ca-certificates libc6-compat libstdc++ git
-
-VOLUME /site
-WORKDIR /site
-
-# Expose port for live server
 EXPOSE 1313
-
-ENTRYPOINT ["hugo"]
-CMD ["--help"]
